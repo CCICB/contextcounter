@@ -1,0 +1,12 @@
+[package]
+name = "contextcounter"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.98"
+clap = { version = "4.5.39", features = ["derive"] }
+fern = { version = "0.7.1", features = ["colored"] }
+humantime = "2.2.0"
+log = "0.4.27"
+noodles = { version = "0.99.0", features = ["fasta"] }
