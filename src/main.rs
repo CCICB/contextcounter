@@ -29,6 +29,10 @@ struct Cli {
     /// Folder to write count files
     #[arg(short, long, default_value_t = false)]
     print_counts: bool,
+
+    // Comma-separated list of fasta entries to skip (commonly chrX,chrY,chrM)
+    #[arg(long, value_name = "CONTIG", num_args = 1.., value_delimiter = ',')]
+    skip: Vec<String>,
 }
 
 fn setup_logger() -> Result<(), fern::InitError> {
@@ -82,7 +86,7 @@ fn run() -> Result<(), anyhow::Error> {
     let fasta = cli.fasta;
     let outdir = cli.outdir;
     let print_counts = cli.print_counts;
-    let skip: HashSet<String> = HashSet::new();
+    let skip: HashSet<String> = cli.skip.into_iter().collect();
 
     // Create output directory if it doesn't exist
     fs::create_dir_all(&outdir)
@@ -145,7 +149,7 @@ fn count_trinucleotides(
     // Read each record (contains references to sequence names & info)
     for result in reader.records() {
         let record = result?;
-        let contig_name = record.definition().name();
+        let contig_name = std::str::from_utf8(record.definition().name().trim_ascii())?;
 
         // Check if contig should be skipped (often used to exclude sex chromosomes from counts
         if !skip.is_empty() && skip.contains(contig_name) {
@@ -202,7 +206,7 @@ fn count_pentanucleotides(
     // Read each record (contains references to sequence names & info)
     for result in reader.records() {
         let record = result?;
-        let contig_name = record.definition().name();
+        let contig_name = std::str::from_utf8(record.definition().name().trim_ascii())?;
 
         // Check if contig should be skipped (often used to exclude sex chromosomes from counts
         if !skip.is_empty() && skip.contains(contig_name) {
@@ -258,7 +262,7 @@ fn count_dinucleotides(
     // Read each record (contains references to sequence names & info)
     for result in reader.records() {
         let record = result?;
-        let contig_name = record.definition().name();
+        let contig_name = std::str::from_utf8(record.definition().name().trim_ascii())?;
 
         // Check if contig should be skipped (often used to exclude sex chromosomes from counts
         if !skip.is_empty() && skip.contains(contig_name) {
