@@ -1,17 +1,31 @@
 # contextcounter
 
-Count the number of opportunities a particular genome/exome/panel offers for mutations in each sequence context evaluated in mutational signature analysis.
+> \[!WARNING\]  
+> This package is in early development and not ready for use
 
-These counts are used to optimise whole-genome derived mutational signature analysis tools like the sigstats R package.
+**`contextcounter`** is a command-line tool for counting the opportunities to mutate different sequence contexts offered by genome, exome, or gene panel reference sequences.
 
+These context counts are essential for **renormalizing** mutational signatures derived from whole-genome data, enabling their accurate application to sequencing data from exomes or custom panels. This functionality is used by tools including the [`sigstats`](https://github.com/CCICB/sigstats) R package.
 
-## Installation
+---
 
-The development version can be installed using cargo
+## 🔧 Features
 
-```
+- Counts **di-**, **tri-**, and **pentanucleotide** contexts
+- Skips user-specified contigs (so you can exclude mitochondrial or sex chromosomes)
+- Outputs context count tables per type
+- Streamless integration with downstream signature tools (sigverse)
+
+---
+
+## 🚀 Installation
+
+Install directly from GitHub using Cargo:
+
+```bash
 cargo install --git https://github.com/CCICB/contextcounter
 ```
+
 
 ## Quick Start
 
