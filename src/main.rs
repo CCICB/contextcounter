@@ -112,11 +112,13 @@ fn write_context_file(
     prefix: &Path,
     content: String,
 ) -> Result<(), anyhow::Error> {
-    let filename = prefix.with_file_name(format!(
-        "{}_{}.tsv",
-        prefix.file_name().unwrap().to_string_lossy(),
-        context_type
-    ));
+    let base_name = prefix
+        .file_name()
+        .ok_or_else(|| anyhow::anyhow!("Prefix has no file name"))?
+        .to_string_lossy();
+
+    let filename = prefix.with_file_name(format!("{}_{}.tsv", base_name, context_type));
+
     Ok(fs::write(filename, content)?)
 }
 
