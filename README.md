@@ -26,8 +26,9 @@ Install directly from GitHub using Cargo:
 cargo install --git https://github.com/CCICB/contextcounter
 ```
 
+---
 
-## Quick Start
+## ⚡ Quick Start
 
 ```
 contextcounter genome.fasta
