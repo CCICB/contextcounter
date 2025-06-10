@@ -3,7 +3,7 @@ use clap::Parser;
 use contextcounter::counts::{CountsDi, CountsPenta, CountsTri};
 use fern::colors::ColoredLevelConfig;
 use log::info;
-use noodles::fasta;
+use needletail::{Sequence, parse_fastx_file};
 use std::{
     collections::HashSet,
     fs::{self, File},
@@ -100,14 +100,14 @@ fn run() -> Result<(), anyhow::Error> {
     let prefix = outdir.join(stem);
 
     let trinucleotides = count_trinucleotides(&fasta, &skip, print_counts)?;
-    let pentanucleotides = count_pentanucleotides(&fasta, &skip, print_counts)?;
-    let dinucleotides = count_dinucleotides(&fasta, &skip, print_counts)?;
+    // let pentanucleotides = count_pentanucleotides(&fasta, &skip, print_counts)?;
+    // let dinucleotides = count_dinucleotides(&fasta, &skip, print_counts)?;
 
     // Write output
     info!("Writing files to: {}", outdir.canonicalize()?.display());
     let _ = write_context_file("trinucleotide", &prefix, trinucleotides.to_string());
-    let _ = write_context_file("dinucleotide", &prefix, dinucleotides.to_string());
-    let _ = write_context_file("pentanucleotide", &prefix, pentanucleotides.to_string());
+    // let _ = write_context_file("dinucleotide", &prefix, dinucleotides.to_string());
+    // let _ = write_context_file("pentanucleotide", &prefix, pentanucleotides.to_string());
     Ok(())
 }
 
@@ -133,7 +133,7 @@ fn count_trinucleotides(
     print_counts: bool,
 ) -> Result<CountsTri, anyhow::Error> {
     // Configure windowsize
-    let windowsize: usize = 3;
+    let windowsize: u8 = 3;
 
     // Initialise counts of each trinucleotide to zero
     let mut tnc_counts = contextcounter::counts::CountsTri::default();
@@ -141,15 +141,16 @@ fn count_trinucleotides(
     info!("Contig: [{}]", fasta.display());
 
     // Create FASTA file reader
-    let mut reader = File::open(fasta)
-        .map(BufReader::new)
-        .map(fasta::io::Reader::new)
-        .context("Failed to read TNC counts")?;
+    let mut reader = parse_fastx_file(fasta).context("Failed to open fasta file")?;
 
     // Read each record (contains references to sequence names & info)
-    for result in reader.records() {
-        let record = result?;
-        let contig_name = std::str::from_utf8(record.definition().name().trim_ascii())?;
+    while let Some(record) = reader.next() {
+        let seqrec = record?;
+
+        let contig_id = std::str::from_utf8(seqrec.id().trim_ascii())?;
+        let (contig_name, _): (&str, &str) = contig_id
+            .split_once(char::is_whitespace)
+            .context("Failed to clean up contig name")?;
 
         // Check if contig should be skipped (often used to exclude sex chromosomes from counts
         if !skip.is_empty() && skip.contains(contig_name) {
@@ -157,21 +158,15 @@ fn count_trinucleotides(
             continue;
         }
 
-        // Otherwise, proceed with TNC counting
+        // Otherwise, proceed with trinucleotide context counting
         info!("Contig: {}", contig_name);
 
-        let seq_bytes = record.sequence().as_ref();
+        // normalize to make sure all the bases are consistently capitalized and
+        // that we remove the newlines since this is FASTA
+        let norm_seq = seqrec.normalize(false);
 
-        // Skip sequences shorter than the window size
-        if seq_bytes.len() < windowsize {
-            continue;
-        }
-
-        // Sliding window of size 3
-        for window in seq_bytes.windows(windowsize) {
-            // Fetch trinucleotide sequence
-            let tri = String::from_utf8(Vec::from(window)).unwrap();
-            tnc_counts.increment(&tri);
+        for kmer in norm_seq.kmers(windowsize) {
+            tnc_counts.increment(std::str::from_utf8(kmer)?)
         }
     }
 
@@ -183,115 +178,115 @@ fn count_trinucleotides(
     Ok(tnc_counts)
 }
 
-/// Count pentanucleotide contexts (pyrimidine centered)
-fn count_pentanucleotides(
-    fasta: &PathBuf,
-    skip: &HashSet<String>,
-    print_counts: bool,
-) -> Result<CountsPenta, anyhow::Error> {
-    // Configure windowsize
-    let windowsize: usize = 5;
+// /// Count pentanucleotide contexts (pyrimidine centered)
+// fn count_pentanucleotides(
+//     fasta: &PathBuf,
+//     skip: &HashSet<String>,
+//     print_counts: bool,
+// ) -> Result<CountsPenta, anyhow::Error> {
+//     // Configure windowsize
+//     let windowsize: usize = 5;
 
-    // Initialise counts of each trinucleotide to zero
-    let mut penta_counts = contextcounter::counts::CountsPenta::default();
+//     // Initialise counts of each trinucleotide to zero
+//     let mut penta_counts = contextcounter::counts::CountsPenta::default();
 
-    info!("Counting pentanucleotide contexts in [{}]", fasta.display());
+//     info!("Counting pentanucleotide contexts in [{}]", fasta.display());
 
-    // Create FASTA file reader
-    let mut reader = File::open(fasta)
-        .map(BufReader::new)
-        .map(fasta::io::Reader::new)
-        .context("Failed to read pentanucleotide counts")?;
+//     // Create FASTA file reader
+//     let mut reader = File::open(fasta)
+//         .map(BufReader::new)
+//         .map(fasta::io::Reader::new)
+//         .context("Failed to read pentanucleotide counts")?;
 
-    // Read each record (contains references to sequence names & info)
-    for result in reader.records() {
-        let record = result?;
-        let contig_name = std::str::from_utf8(record.definition().name().trim_ascii())?;
+//     // Read each record (contains references to sequence names & info)
+//     for result in reader.records() {
+//         let record = result?;
+//         let contig_name = std::str::from_utf8(record.definition().name().trim_ascii())?;
 
-        // Check if contig should be skipped (often used to exclude sex chromosomes from counts
-        if !skip.is_empty() && skip.contains(contig_name) {
-            info!("Contig: {} (skipped: in blacklist)", contig_name);
-            continue;
-        }
+//         // Check if contig should be skipped (often used to exclude sex chromosomes from counts
+//         if !skip.is_empty() && skip.contains(contig_name) {
+//             info!("Contig: {} (skipped: in blacklist)", contig_name);
+//             continue;
+//         }
 
-        // Otherwise, proceed with TNC counting
-        info!("Contig: {}", contig_name);
+//         // Otherwise, proceed with TNC counting
+//         info!("Contig: {}", contig_name);
 
-        let seq_bytes = record.sequence().as_ref();
+//         let seq_bytes = record.sequence().as_ref();
 
-        // Skip sequences shorter than the window size
-        if seq_bytes.len() < windowsize {
-            continue;
-        }
+//         // Skip sequences shorter than the window size
+//         if seq_bytes.len() < windowsize {
+//             continue;
+//         }
 
-        // Sliding window along fasta entry
-        for window in seq_bytes.windows(windowsize) {
-            // Fetch trinucleotide sequence
-            let penta = String::from_utf8(Vec::from(window)).unwrap();
-            penta_counts.increment(&penta);
-        }
-    }
+//         // Sliding window along fasta entry
+//         for window in seq_bytes.windows(windowsize) {
+//             // Fetch trinucleotide sequence
+//             let penta = String::from_utf8(Vec::from(window)).unwrap();
+//             penta_counts.increment(&penta);
+//         }
+//     }
 
-    // Display count matrix
-    if print_counts {
-        println!("{}", penta_counts)
-    };
+//     // Display count matrix
+//     if print_counts {
+//         println!("{}", penta_counts)
+//     };
 
-    Ok(penta_counts)
-}
+//     Ok(penta_counts)
+// }
 
-fn count_dinucleotides(
-    fasta: &PathBuf,
-    skip: &HashSet<String>,
-    print_counts: bool,
-) -> Result<CountsDi, anyhow::Error> {
-    // Configure windowsize
-    let windowsize: usize = 2;
+// fn count_dinucleotides(
+//     fasta: &PathBuf,
+//     skip: &HashSet<String>,
+//     print_counts: bool,
+// ) -> Result<CountsDi, anyhow::Error> {
+//     // Configure windowsize
+//     let windowsize: usize = 2;
 
-    // Initialise counts of each trinucleotide to zero
-    let mut dinucleotide_counts = contextcounter::counts::CountsDi::default();
+//     // Initialise counts of each trinucleotide to zero
+//     let mut dinucleotide_counts = contextcounter::counts::CountsDi::default();
 
-    info!("Counting dinucleotide contexts in [{}]", fasta.display());
+//     info!("Counting dinucleotide contexts in [{}]", fasta.display());
 
-    // Create FASTA file reader
-    let mut reader = File::open(fasta)
-        .map(BufReader::new)
-        .map(fasta::io::Reader::new)
-        .context("Failed to read dinucleotide counts")?;
+//     // Create FASTA file reader
+//     let mut reader = File::open(fasta)
+//         .map(BufReader::new)
+//         .map(fasta::io::Reader::new)
+//         .context("Failed to read dinucleotide counts")?;
 
-    // Read each record (contains references to sequence names & info)
-    for result in reader.records() {
-        let record = result?;
-        let contig_name = std::str::from_utf8(record.definition().name().trim_ascii())?;
+//     // Read each record (contains references to sequence names & info)
+//     for result in reader.records() {
+//         let record = result?;
+//         let contig_name = std::str::from_utf8(record.definition().name().trim_ascii())?;
 
-        // Check if contig should be skipped (often used to exclude sex chromosomes from counts
-        if !skip.is_empty() && skip.contains(contig_name) {
-            info!("Contig: {} (skipped: in blacklist)", contig_name);
-            continue;
-        }
+//         // Check if contig should be skipped (often used to exclude sex chromosomes from counts
+//         if !skip.is_empty() && skip.contains(contig_name) {
+//             info!("Contig: {} (skipped: in blacklist)", contig_name);
+//             continue;
+//         }
 
-        // Otherwise, proceed with TNC counting
-        info!("Contig: {}", contig_name);
+//         // Otherwise, proceed with TNC counting
+//         info!("Contig: {}", contig_name);
 
-        let seq_bytes = record.sequence().as_ref();
+//         let seq_bytes = record.sequence().as_ref();
 
-        // Skip sequences shorter than the window size
-        if seq_bytes.len() < windowsize {
-            continue;
-        }
+//         // Skip sequences shorter than the window size
+//         if seq_bytes.len() < windowsize {
+//             continue;
+//         }
 
-        // Sliding window along fasta entry
-        for window in seq_bytes.windows(windowsize) {
-            // Fetch trinucleotide sequence
-            let dinucleotide = String::from_utf8(Vec::from(window)).unwrap();
-            dinucleotide_counts.increment(&dinucleotide);
-        }
-    }
+//         // Sliding window along fasta entry
+//         for window in seq_bytes.windows(windowsize) {
+//             // Fetch trinucleotide sequence
+//             let dinucleotide = String::from_utf8(Vec::from(window)).unwrap();
+//             dinucleotide_counts.increment(&dinucleotide);
+//         }
+//     }
 
-    // Display count matrix
-    if print_counts {
-        println!("{}", dinucleotide_counts);
-    }
+//     // Display count matrix
+//     if print_counts {
+//         println!("{}", dinucleotide_counts);
+//     }
 
-    Ok(dinucleotide_counts)
-}
+//     Ok(dinucleotide_counts)
+// }
