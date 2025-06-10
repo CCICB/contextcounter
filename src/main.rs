@@ -30,9 +30,14 @@ struct Cli {
     #[arg(short, long, default_value_t = false)]
     print_counts: bool,
 
-    // Comma-separated list of fasta entries to skip (commonly chrX,chrY,chrM)
-    #[arg(long, value_name = "CONTIG", num_args = 1.., value_delimiter = ',')]
+    /// Comma-separated list of fasta entries to skip (commonly chrX,chrY,chrM)
+    #[arg(long, value_name = "CONTIG1,CONTIG2", num_args = 1.., value_delimiter = ',')]
     skip: Vec<String>,
+
+    /// Comma-separated list of fasta entries to count (commonly all autosomes).
+    /// If not supplied will include all contigs except for those described by '--ski[' argument
+    #[arg(long, value_name = "CONTIC1,CONTIG2", num_args = 1.., value_delimiter = ',')]
+    include: Vec<String>,
 }
 
 fn setup_logger() -> Result<(), fern::InitError> {
@@ -87,6 +92,12 @@ fn run() -> Result<(), anyhow::Error> {
     let outdir = cli.outdir;
     let print_counts = cli.print_counts;
     let skip: HashSet<String> = cli.skip.into_iter().collect();
+    let include: HashSet<String> = cli.include.into_iter().collect();
+    if !skip.is_empty() && !include.is_empty() {
+        anyhow::bail!(
+            "There is no reason to set both skip and include arguments. Either whitelisting samples with include will automatically blacklist all non-specified contigs"
+        );
+    }
 
     // Create output directory if it doesn't exist
     fs::create_dir_all(&outdir)
@@ -99,9 +110,9 @@ fn run() -> Result<(), anyhow::Error> {
 
     let prefix = outdir.join(stem);
 
-    let trinucleotides = count_trinucleotides(&fasta, &skip, print_counts)?;
-    let pentanucleotides = count_pentanucleotides(&fasta, &skip, print_counts)?;
-    let dinucleotides = count_dinucleotides(&fasta, &skip, print_counts)?;
+    let trinucleotides = count_trinucleotides(&fasta, &skip, &include, print_counts)?;
+    let pentanucleotides = count_pentanucleotides(&fasta, &skip, &include, print_counts)?;
+    let dinucleotides = count_dinucleotides(&fasta, &skip, &include, print_counts)?;
 
     // Write output
     info!("Writing files to: {}", outdir.canonicalize()?.display());
@@ -130,6 +141,7 @@ fn write_context_file(
 fn count_trinucleotides(
     fasta: &PathBuf,
     skip: &HashSet<String>,
+    include: &HashSet<String>,
     print_counts: bool,
 ) -> Result<CountsTri, anyhow::Error> {
     // Configure windowsize
@@ -138,29 +150,42 @@ fn count_trinucleotides(
     // Initialise counts of each trinucleotide to zero
     let mut tnc_counts = contextcounter::counts::CountsTri::default();
 
-    info!("Contig: [{}]", fasta.display());
+    info!("Fasta File: [{}]", fasta.display());
 
-    // Create FASTA file reader
-    let mut reader = File::open(fasta)
-        .map(BufReader::new)
-        .map(fasta::io::Reader::new)
-        .context("Failed to read TNC counts")?;
+    // Open connection to fasta file
+    let conn_fasta = File::open(fasta)?;
+
+    // Attach a BufReader with a 32 KiB buffer:
+    let buf_reader = BufReader::with_capacity(32 * 1024, conn_fasta);
+
+    // 3) Create the noodles FASTA reader over that buffered reader:
+    let mut reader = fasta::io::Reader::new(buf_reader);
 
     // Read each record (contains references to sequence names & info)
     for result in reader.records() {
         let record = result?;
         let contig_name = std::str::from_utf8(record.definition().name().trim_ascii())?;
 
-        // Check if contig should be skipped (often used to exclude sex chromosomes from counts
+        // Check if contig should be skipped (in blacklist). Commonly used to exclude sex chromosomes from counts
         if !skip.is_empty() && skip.contains(contig_name) {
             info!("Contig: {} (skipped: in blacklist)", contig_name);
             continue;
         }
 
+        // Check if contig should be skipped (not in whitelist).
+        if !include.is_empty() && !include.contains(contig_name) {
+            info!("Contig: {} (skipped: not in whitelist)", contig_name);
+        }
+
         // Otherwise, proceed with TNC counting
         info!("Contig: {}", contig_name);
-
         let seq_bytes = record.sequence().as_ref();
+        // info!(
+        //     "Loaded contig {}: {} bases (≈{} bytes)",
+        //     contig_name,
+        //     seq_bytes.len(),
+        //     seq_bytes.len()
+        // );
 
         // Skip sequences shorter than the window size
         if seq_bytes.len() < windowsize {
@@ -187,6 +212,7 @@ fn count_trinucleotides(
 fn count_pentanucleotides(
     fasta: &PathBuf,
     skip: &HashSet<String>,
+    include: &HashSet<String>,
     print_counts: bool,
 ) -> Result<CountsPenta, anyhow::Error> {
     // Configure windowsize
@@ -208,13 +234,18 @@ fn count_pentanucleotides(
         let record = result?;
         let contig_name = std::str::from_utf8(record.definition().name().trim_ascii())?;
 
-        // Check if contig should be skipped (often used to exclude sex chromosomes from counts
+        // Check if contig should be skipped (in blacklist). Commonly used to exclude sex chromosomes from counts
         if !skip.is_empty() && skip.contains(contig_name) {
             info!("Contig: {} (skipped: in blacklist)", contig_name);
             continue;
         }
 
-        // Otherwise, proceed with TNC counting
+        // Check if contig should be skipped (not in whitelist).
+        if !include.is_empty() && !include.contains(contig_name) {
+            info!("Contig: {} (skipped: not in whitelist)", contig_name);
+        }
+
+        // Otherwise, proceed with pentanucleotide  counting
         info!("Contig: {}", contig_name);
 
         let seq_bytes = record.sequence().as_ref();
@@ -243,6 +274,7 @@ fn count_pentanucleotides(
 fn count_dinucleotides(
     fasta: &PathBuf,
     skip: &HashSet<String>,
+    include: &HashSet<String>,
     print_counts: bool,
 ) -> Result<CountsDi, anyhow::Error> {
     // Configure windowsize
@@ -264,12 +296,16 @@ fn count_dinucleotides(
         let record = result?;
         let contig_name = std::str::from_utf8(record.definition().name().trim_ascii())?;
 
-        // Check if contig should be skipped (often used to exclude sex chromosomes from counts
+        // Check if contig should be skipped (in blacklist). Commonly used to exclude sex chromosomes from counts
         if !skip.is_empty() && skip.contains(contig_name) {
             info!("Contig: {} (skipped: in blacklist)", contig_name);
             continue;
         }
 
+        // Check if contig should be skipped (not in whitelist).
+        if !include.is_empty() && !include.contains(contig_name) {
+            info!("Contig: {} (skipped: not in whitelist)", contig_name);
+        }
         // Otherwise, proceed with TNC counting
         info!("Contig: {}", contig_name);
 
